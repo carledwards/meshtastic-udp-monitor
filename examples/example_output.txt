@@ -1,0 +1,201 @@
+Packet #1 - 2025-06-15 08:00:15.123
+Source: 192.168.1.100:4403
+Size: 45 bytes
+
+DECODED MESHPACKET:
+  From Node: !4e66636c
+  To: Broadcast (all nodes)
+  Channel Hash: 0
+  Packet ID: 0x1a2b3c4d
+  Received Time: 2025-06-15 08:00:15 (1718456415)
+  SNR: 8.5 dB (Good)
+  Hop Limit: 3 hops remaining
+  Priority: DEFAULT (10)
+  RSSI: -65 dBm (Good)
+  Started with: 3 hops
+
+  DECODED PAYLOAD:
+    Port: TEXT_MESSAGE_APP (1)
+    📱 Message Text: "Hello mesh network!"
+    🔄 Wants Response: Yes
+
+RAW PACKET DATA:
+  0000: 08 6c 63 66 4e 10 ff ff ff ff 0f 18 00 20 4d 3c |.lcfN........ M<|
+  0010: 2b 1a 32 0a 1e 0a 12 48 65 6c 6c 6f 20 6d 65 73 |+.2....Hello mes|
+  0020: 68 20 6e 65 74 77 6f 72 6b 21 10 01 18 01       |h network!....|
+
+Packet #2 - 2025-06-15 08:00:16.456
+Source: 192.168.1.101:4403
+Size: 78 bytes
+
+DECODED MESHPACKET:
+  From Node: !a1b2c3d4
+  To: !4e66636c
+  Channel Hash: 0
+  Packet ID: 0x5e6f7a8b
+  SNR: 12.3 dB (Excellent)
+  Hop Limit: 2 hops remaining
+  Priority: RELIABLE (30)
+  RSSI: -58 dBm (Very Good)
+
+  ENCRYPTED PAYLOAD:
+    Size: 32 bytes
+    Data: d4f1bb3a20290759f0bcffabcf4e6901...
+
+  DECRYPTION ATTEMPT:
+    Status: Success (using Default PSK (index 1))
+    Decrypted Data (18 bytes):
+      0000: 0a 10 0a 0e 54 72 61 63 65 72 6f 75 74 65 20 74 |....Traceroute t|
+      0010: 65 73 74                                        |est|
+
+    Decoded Message:
+      Port: TRACEROUTE_APP (70)
+      🛣️ Route Path: !4e66636c → !a1b2c3d4 → !f5e6d7c8
+      🔢 Hop Count: 3 nodes
+      📶 SNR Forward: 8.5dB → 12.3dB → 9.1dB
+
+Packet #3 - 2025-06-15 08:00:17.789
+Source: 192.168.1.102:4403
+Size: 67 bytes
+
+DECODED MESHPACKET:
+  From Node: !f5e6d7c8
+  To: Broadcast (all nodes)
+  Channel Hash: 0
+  Packet ID: 0x9c8d7e6f
+  SNR: 6.2 dB (Good)
+  Hop Limit: 3 hops remaining
+  Priority: DEFAULT (10)
+  RSSI: -72 dBm (Good)
+
+  ENCRYPTED PAYLOAD:
+    Size: 28 bytes
+    Data: 4e221d8bc3091be2119c8912f225195d...
+
+  DECRYPTION ATTEMPT:
+    Status: Success (using Channel 1 (NodeChat))
+    Decrypted Data (16 bytes):
+      0000: 0a 0e 08 80 c2 d7 2f 10 80 e4 97 d0 12 18 03 20 |....../........ |
+
+    Decoded Message:
+      Port: POSITION_APP (3)
+      🌍 Location: 37.774929, -122.419416
+      🗺️ Maps Link: https://maps.google.com/?q=37.774929,-122.419416
+      ⛰️ Altitude: 15m
+      🛰️ Satellites: 8
+
+STATISTICS
+Runtime: 45.2 seconds
+Total packets: 127
+Total bytes: 5,834
+Rate: 2.81 packets/sec, 129.1 bytes/sec
+SIMPLE OUTPUT (default):
+Packet #1 - 2025-06-15 08:00:15.123
+From: !4e66636c → To: Broadcast
+Channel: 0 | Hops: 3/3 | Signal: -65 dBm (Good), 8.5 dB SNR
+
+TEXT_MESSAGE_APP: Text Message
+  📱 Message Text: "Hello mesh network!"
+  🔄 Wants Response: Yes
+
+Packet #2 - 2025-06-15 08:00:16.456
+From: !a1b2c3d4 → To: !4e66636c
+Channel: 0 | Hops: 2/7 | Signal: -58 dBm (Very Good), 12.3 dB SNR
+
+TRACEROUTE_APP: Network Traceroute
+  🛣️ Route Path: !4e66636c → !a1b2c3d4 → !f5e6d7c8
+  🔢 Hop Count: 3 nodes
+  📶 SNR Forward: 8.5dB → 12.3dB → 9.1dB
+
+Packet #3 - 2025-06-15 08:00:17.789
+From: !f5e6d7c8 → To: Broadcast
+Channel: 0 | Hops: 3 remaining | Signal: -72 dBm (Good), 6.2 dB SNR
+
+POSITION_APP: Position Update
+  🌍 Location: 37.774929, -122.419416
+  🗺️ Maps Link: https://maps.google.com/?q=37.774929,-122.419416
+  ⛰️ Altitude: 15m
+  🛰️ Satellites: 8
+
+Packet #4 - 2025-06-15 08:00:18.234
+From: !70308246 → To: !435bbeb0
+Channel: 24 | Hops: 2/7 | Signal: -52 dBm (Very Good), 8.0 dB SNR
+
+NODEINFO_APP: Node Information Update
+  📛 Node ID: !70308246
+  📝 Long Name: OVWH
+  🏷️ Short Name: OVWH
+  🔗 MAC Address: f1:d1:70:30:82:46
+  💻 Hardware: 9
+  🔄 Wants Response: Yes
+
+
+VERBOSE OUTPUT (with -v flag):
+Packet #1 - 2025-06-15 08:00:15.123
+Source: 192.168.1.100:4403
+Size: 45 bytes
+
+DECODED MESHPACKET:
+  From Node: !4e66636c
+  To: Broadcast (all nodes)
+  Channel Hash: 0
+  Packet ID: 0x1a2b3c4d
+  Received Time: 2025-06-15 08:00:15 (1718456415)
+  SNR: 8.5 dB (Good)
+  Hop Limit: 3 hops remaining
+  Priority: DEFAULT (10)
+  RSSI: -65 dBm (Good)
+  Started with: 3 hops
+
+  DECODED PAYLOAD:
+    Port: TEXT_MESSAGE_APP (1)
+    📱 Message Text: "Hello mesh network!"
+    🔄 Wants Response: Yes
+
+RAW PACKET DATA:
+  0000: 08 6c 63 66 4e 10 ff ff ff ff 0f 18 00 20 4d 3c |.lcfN........ M<|
+  0010: 2b 1a 32 0a 1e 0a 12 48 65 6c 6c 6f 20 6d 65 73 |+.2....Hello mes|
+  0020: 68 20 6e 65 74 77 6f 72 6b 21 10 01 18 01       |h network!....|
+
+Packet #2 - 2025-06-15 08:00:16.456
+Source: 192.168.1.101:4403
+Size: 78 bytes
+
+DECODED MESHPACKET:
+  From Node: !a1b2c3d4
+  To: !4e66636c
+  Channel Hash: 0
+  Packet ID: 0x5e6f7a8b
+  SNR: 12.3 dB (Excellent)
+  Hop Limit: 2 hops remaining
+  Priority: RELIABLE (30)
+  RSSI: -58 dBm (Very Good)
+
+  ENCRYPTED PAYLOAD:
+    Size: 32 bytes
+    Data: d4f1bb3a20290759f0bcffabcf4e6901...
+
+  DECRYPTION ATTEMPT:
+    Status: Success (using Default PSK (index 1))
+    Decrypted Data (18 bytes):
+      0000: 0a 10 0a 0e 54 72 61 63 65 72 6f 75 74 65 20 74 |....Traceroute t|
+      0010: 65 73 74                                        |est|
+
+    Decoded Message:
+      Port: TRACEROUTE_APP (70)
+      🛣️ Route Path: !4e66636c → !a1b2c3d4 → !f5e6d7c8
+      🔢 Hop Count: 3 nodes
+      📶 SNR Forward: 8.5dB → 12.3dB → 9.1dB
+
+RAW PACKET DATA:
+  0000: 0d 46 82 30 70 15 b0 be 5b 43 18 18 2a 27 e5 fe |.F.0p...[C..*'..|
+  0010: 65 be 79 3a 4a aa 40 e2 a5 20 8d 33 72 99 21 ee |e.y:J.@.. .3r.!.|
+  0020: 48 c4 30 dd 2e e1 d6 b7 0f 94 70 15 87 13 dc d1 |H.0.......p.....|
+  0030: 21 2a 28 da d2 35 da e7 10 0d 3d 9e f0 4e 68 45 |!*(..5....=..NhE|
+  0040: 00 00 00 41 48 02 58 46 60 cc ff ff ff ff ff ff |...AH.XF`.......|
+
+STATISTICS
+Runtime: 45.2 seconds
+Total packets: 127
+Total bytes: 5,834
+Rate: 2.81 packets/sec, 129.1 bytes/sec
