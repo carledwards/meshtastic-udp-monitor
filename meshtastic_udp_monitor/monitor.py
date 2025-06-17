@@ -13,6 +13,8 @@ import signal
 import sys
 import os
 import glob
+import json
+import tempfile
 from datetime import datetime
 import threading
 import base64
@@ -29,7 +31,7 @@ except ImportError as e:
     sys.exit(1)
 
 class MeshtasticUDPDecoder:
-    def __init__(self, verbose=False, capture_dir=None):
+    def __init__(self, verbose=False, capture_dir=None, node_db_file=None):
         self.multicast_group = '224.0.0.69'
         self.port = 4403
         self.sock = None
@@ -43,6 +45,133 @@ class MeshtasticUDPDecoder:
         self.capture_file = None
         self.current_capture_date = None
         
+        # Node database functionality
+        self.node_db_file = node_db_file
+        self.node_db = {}  # In-memory node database: {node_id: node_info}
+        self.node_db_lock = threading.Lock()
+        self.node_db_updates = {}  # Track updates during replay
+        
+        # Load existing node database if specified
+        if self.node_db_file:
+            self.load_node_database()
+        
+        # Initialize channel keys for decryption
+        self._init_channel_keys()
+    
+    def load_node_database(self):
+        """Load existing node database from JSONL file"""
+        if not os.path.exists(self.node_db_file):
+            print(f"Node database file not found, will create: {self.node_db_file}")
+            return
+        
+        try:
+            with open(self.node_db_file, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    try:
+                        node_info = json.loads(line)
+                        node_id = node_info.get('id')
+                        if node_id:
+                            self.node_db[node_id] = node_info
+                    except json.JSONDecodeError as e:
+                        print(f"Warning: Invalid JSON at line {line_num} in {self.node_db_file}: {e}")
+                        continue
+            
+            print(f"Loaded {len(self.node_db)} nodes from database: {self.node_db_file}")
+            
+        except Exception as e:
+            print(f"Error loading node database {self.node_db_file}: {e}")
+    
+    def save_node_database(self):
+        """Save node database to JSONL file atomically"""
+        if not self.node_db_file:
+            return
+        
+        try:
+            # Write to temporary file first for atomic operation
+            temp_file = self.node_db_file + '.tmp'
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                for node_info in self.node_db.values():
+                    json.dump(node_info, f, ensure_ascii=False)
+                    f.write('\n')
+            
+            # Atomic rename
+            os.rename(temp_file, self.node_db_file)
+            
+        except Exception as e:
+            print(f"Error saving node database: {e}")
+            # Clean up temp file if it exists
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+    
+    def update_node_info(self, node_id, node_data, update_db_file=True):
+        """Update node information in memory and optionally in database file"""
+        current_time = time.time()
+        
+        # Create or update node info
+        node_info = self.node_db.get(node_id, {})
+        node_info.update({
+            'id': node_id,
+            'last_seen': current_time
+        })
+        
+        # Update with new data
+        if 'long_name' in node_data:
+            node_info['long_name'] = node_data['long_name']
+        if 'short_name' in node_data:
+            node_info['short_name'] = node_data['short_name']
+        if 'mac' in node_data:
+            node_info['mac'] = node_data['mac']
+        if 'hardware' in node_data:
+            node_info['hardware'] = node_data['hardware']
+        
+        # Update in-memory database
+        with self.node_db_lock:
+            self.node_db[node_id] = node_info
+        
+        # For live monitoring, save the complete deduplicated database
+        if update_db_file and self.node_db_file:
+            self.save_node_database()
+    
+    def append_node_to_file(self, node_info):
+        """Append single node update to database file atomically"""
+        if not self.node_db_file:
+            return
+        
+        try:
+            # Atomic append operation
+            with open(self.node_db_file, 'a', encoding='utf-8') as f:
+                json.dump(node_info, f, ensure_ascii=False)
+                f.write('\n')
+        except Exception as e:
+            print(f"Error appending to node database: {e}")
+    
+    def get_node_name(self, node_id):
+        """Get human-readable name for a node ID"""
+        node_info = self.node_db.get(node_id)
+        if node_info:
+            long_name = node_info.get('long_name', '')
+            short_name = node_info.get('short_name', '')
+            if long_name:
+                return long_name
+            elif short_name:
+                return short_name
+        return None
+    
+    def format_node_with_name(self, node_id):
+        """Format node ID with name if available"""
+        name = self.get_node_name(node_id)
+        if name:
+            return f"{node_id} ({name})"
+        return node_id
+    
+    def _init_channel_keys(self):
+        """Initialize channel keys for decryption"""
         # Default channel keys - from Meshtastic source code
         # The actual PSKs from src/mesh/Channels.h and userPrefs.jsonc
         default_psk = bytes([0xd4, 0xf1, 0xbb, 0x3a, 0x20, 0x29, 0x07, 0x59,
@@ -537,6 +666,19 @@ class MeshtasticUDPDecoder:
                         
                     if user.hw_model:
                         interpretation["💻 Hardware"] = self.format_hardware_model(user.hw_model)
+                    
+                    # Update node database if enabled
+                    if self.node_db_file:
+                        node_data = {
+                            'long_name': user.long_name,
+                            'short_name': user.short_name,
+                        }
+                        if user.macaddr:
+                            node_data['mac'] = ':'.join(f'{b:02x}' for b in user.macaddr)
+                        if user.hw_model:
+                            node_data['hardware'] = self.format_hardware_model(user.hw_model)
+                        
+                        self.update_node_info(user.id, node_data, update_db_file=True)
                         
                 except Exception as e:
                     interpretation["Payload Data"] = f"bytes({len(data_msg.payload)}): {data_msg.payload.hex()[:40]}{'...' if len(data_msg.payload) > 20 else ''}"
@@ -850,12 +992,15 @@ class MeshtasticUDPDecoder:
         print(f"{'='*80}")
         print(f"Packet #{packet_num} - {timestamp}")
         
-        # Format the from/to line
-        from_node = self.format_node_id(getattr(mesh_packet, 'from'))
+        # Format the from/to line with node names if available
+        from_node_id = self.format_node_id(getattr(mesh_packet, 'from'))
+        from_node = self.format_node_with_name(from_node_id) if self.node_db_file else from_node_id
+        
         if mesh_packet.to == 0xFFFFFFFF:
             to_node = "Broadcast"
         else:
-            to_node = self.format_node_id(mesh_packet.to)
+            to_node_id = self.format_node_id(mesh_packet.to)
+            to_node = self.format_node_with_name(to_node_id) if self.node_db_file else to_node_id
         
         print(f"From: {from_node} → To: {to_node}")
         
@@ -1043,7 +1188,7 @@ class MeshtasticUDPDecoder:
         self.print_statistics()
         sys.exit(0)
     
-    def replay_file(self, filename):
+    def replay_file(self, filename, update_db=False):
         """Replay packets from a single TSV file"""
         print(f"Replaying packets from: {filename}")
         
@@ -1071,7 +1216,14 @@ class MeshtasticUDPDecoder:
                         fake_addr = ('127.0.0.1', 4403)
                         
                         # Process the packet with original timestamp
-                        self.process_packet(packet_data, fake_addr, original_timestamp)
+                        # For replay with update_db, temporarily disable file updates during processing
+                        if update_db:
+                            # Store original update setting and disable file updates during replay
+                            original_update_setting = True
+                            # Process packet but don't update file immediately
+                            self.process_packet(packet_data, fake_addr, original_timestamp)
+                        else:
+                            self.process_packet(packet_data, fake_addr, original_timestamp)
                         
                     except ValueError as e:
                         print(f"Warning: Invalid hex data at line {line_num}: {e}")
@@ -1079,13 +1231,18 @@ class MeshtasticUDPDecoder:
                     except Exception as e:
                         print(f"Warning: Error processing line {line_num}: {e}")
                         continue
+            
+            # Save the complete database at the end if updating
+            if update_db and self.node_db_file:
+                print(f"Saving updated node database...")
+                self.save_node_database()
                         
         except FileNotFoundError:
             print(f"Error: File not found: {filename}")
         except Exception as e:
             print(f"Error reading file {filename}: {e}")
     
-    def replay_directory(self, directory):
+    def replay_directory(self, directory, update_db=False):
         """Replay packets from all TSV files in a directory"""
         print(f"Replaying packets from directory: {directory}")
         
@@ -1101,9 +1258,14 @@ class MeshtasticUDPDecoder:
         
         for tsv_file in tsv_files:
             print(f"\n--- Processing {os.path.basename(tsv_file)} ---")
-            self.replay_file(tsv_file)
+            self.replay_file(tsv_file, update_db)
+        
+        # Save the complete database at the end if updating
+        if update_db and self.node_db_file:
+            print(f"Saving updated node database...")
+            self.save_node_database()
     
-    def replay_stdin(self):
+    def replay_stdin(self, update_db=False):
         """Replay packets from stdin (for piping)"""
         print("Reading packets from stdin...")
         

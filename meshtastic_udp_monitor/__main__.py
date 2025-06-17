@@ -12,22 +12,29 @@ from .monitor import MeshtasticUDPDecoder
 
 def cmd_monitor(args):
     """Handle monitor command"""
-    decoder = MeshtasticUDPDecoder(verbose=args.verbose, capture_dir=args.capture_dir)
+    decoder = MeshtasticUDPDecoder(
+        verbose=args.verbose, 
+        capture_dir=args.capture_dir,
+        node_db_file=getattr(args, 'node_db', None)
+    )
     decoder.start_monitoring()
 
 def cmd_replay(args):
     """Handle replay command"""
-    decoder = MeshtasticUDPDecoder(verbose=args.verbose)
+    decoder = MeshtasticUDPDecoder(
+        verbose=args.verbose,
+        node_db_file=getattr(args, 'node_db', None)
+    )
     
     if args.input:
         # Replay from file or directory
         if os.path.isdir(args.input):
-            decoder.replay_directory(args.input)
+            decoder.replay_directory(args.input, update_db=getattr(args, 'update_db', False))
         else:
-            decoder.replay_file(args.input)
+            decoder.replay_file(args.input, update_db=getattr(args, 'update_db', False))
     else:
         # Replay from stdin
-        decoder.replay_stdin()
+        decoder.replay_stdin(update_db=getattr(args, 'update_db', False))
 
 def main():
     """Main entry point with subcommand parsing"""
@@ -63,6 +70,10 @@ Examples:
         '--capture-dir',
         help='Directory to capture packets to (creates daily .tsv files)'
     )
+    monitor_parser.add_argument(
+        '--node-db',
+        help='Node database file (JSONL format) to track node information'
+    )
     monitor_parser.set_defaults(func=cmd_monitor)
     
     # Replay command
@@ -76,6 +87,15 @@ Examples:
         '-v', '--verbose',
         action='store_true',
         help='Enable verbose output (hex dumps, encryption details, raw data)'
+    )
+    replay_parser.add_argument(
+        '--node-db',
+        help='Node database file (JSONL format) to use for node name lookups'
+    )
+    replay_parser.add_argument(
+        '--update-db',
+        action='store_true',
+        help='Update the node database with information found during replay'
     )
     replay_parser.set_defaults(func=cmd_replay)
     
