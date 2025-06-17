@@ -46,6 +46,13 @@ This tool captures and decodes UDP multicast packets broadcast by Meshtastic dev
 - Thread-safe packet counting
 - Configurable output formatting
 
+### 💾 **Packet Capture and Replay**
+- **Live Capture**: Save packets to TSV files with daily rotation
+- **Flexible Replay**: Replay from files, directories, or stdin
+- **Unix-Friendly Format**: TSV format works with standard command-line tools
+- **Time-Based Filtering**: Easy filtering by timestamp ranges
+- **Pipe Support**: Full integration with Unix pipes and filters
+
 ## Installation
 
 ### Option 1: Install from PyPI (when published)
@@ -82,17 +89,62 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Basic Usage
+### Monitor Live Traffic
 ```bash
 # Simple, clean output (default)
 python -m meshtastic_udp_monitor
+python -m meshtastic_udp_monitor monitor
 
 # Verbose output with hex dumps and detailed analysis
-python -m meshtastic_udp_monitor -v
-python -m meshtastic_udp_monitor --verbose
+python -m meshtastic_udp_monitor monitor -v
+python -m meshtastic_udp_monitor monitor --verbose
+
+# Monitor and capture packets to files (daily rotation)
+python -m meshtastic_udp_monitor monitor --capture-dir ./packets/
+python -m meshtastic_udp_monitor monitor --capture-dir ./packets/ -v
 
 # Show help
 python -m meshtastic_udp_monitor --help
+python -m meshtastic_udp_monitor monitor --help
+```
+
+### Capture and Replay Packets
+```bash
+# Replay from a single capture file
+python -m meshtastic_udp_monitor replay packets.tsv
+python -m meshtastic_udp_monitor replay packets.tsv -v
+
+# Replay from a directory (all .tsv files)
+python -m meshtastic_udp_monitor replay ./packets/
+python -m meshtastic_udp_monitor replay ./packets/ -v
+
+# Replay from stdin (pipe support)
+cat packets.tsv | python -m meshtastic_udp_monitor replay
+grep "^1718" packets.tsv | python -m meshtastic_udp_monitor replay -v
+tail -n 100 packets.tsv | python -m meshtastic_udp_monitor replay
+
+# Show replay help
+python -m meshtastic_udp_monitor replay --help
+```
+
+### Capture File Format
+Captured packets are stored in TSV (Tab-Separated Values) format:
+```
+timestamp<TAB>hex_packet_data
+1718550960.123	0d4682307015b0be5b43181828da27e5fe65be793a4aaa40e2a5208d33729921ee48c4
+1718550961.456	08046c63664e10ffffffff0f180020d43c2b1a320a1e0a1248656c6c6f206d657368
+```
+
+This format allows easy processing with standard Unix tools:
+```bash
+# Count packets per day
+wc -l ./packets/*.tsv
+
+# Filter by time range
+awk -F'\t' '$1 > 1718550000 && $1 < 1718560000' packets.tsv
+
+# Extract just packet data
+cut -f2 packets.tsv
 ```
 
 ### Run as Installed Command

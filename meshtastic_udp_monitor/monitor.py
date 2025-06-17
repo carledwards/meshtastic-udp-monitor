@@ -11,6 +11,8 @@ import struct
 import time
 import signal
 import sys
+import os
+import glob
 from datetime import datetime
 import threading
 import base64
@@ -19,7 +21,7 @@ from cryptography.hazmat.backends import default_backend
 
 # Import the actual Meshtastic protobuf definitions
 try:
-    from meshtastic import mesh_pb2, portnums_pb2
+    from meshtastic import mesh_pb2, portnums_pb2, telemetry_pb2
     PROTOBUF_AVAILABLE = True
 except ImportError as e:
     print(f"✗ Error importing Meshtastic protobufs: {e}")
@@ -27,7 +29,7 @@ except ImportError as e:
     sys.exit(1)
 
 class MeshtasticUDPDecoder:
-    def __init__(self, verbose=False):
+    def __init__(self, verbose=False, capture_dir=None):
         self.multicast_group = '224.0.0.69'
         self.port = 4403
         self.sock = None
@@ -37,6 +39,9 @@ class MeshtasticUDPDecoder:
         self.start_time = None
         self.stats_lock = threading.Lock()
         self.verbose = verbose
+        self.capture_dir = capture_dir
+        self.capture_file = None
+        self.current_capture_date = None
         
         # Default channel keys - from Meshtastic source code
         # The actual PSKs from src/mesh/Channels.h and userPrefs.jsonc
@@ -537,24 +542,126 @@ class MeshtasticUDPDecoder:
                     interpretation["Payload Data"] = f"bytes({len(data_msg.payload)}): {data_msg.payload.hex()[:40]}{'...' if len(data_msg.payload) > 20 else ''}"
                     
             elif data_msg.portnum == portnums_pb2.PortNum.TELEMETRY_APP:
-                # Manual telemetry decoding since protobuf might not be available
+                # Proper telemetry decoding using protobuf definitions
                 try:
-                    if len(data_msg.payload) >= 4:
-                        # Try to extract voltage (common first field)
-                        voltage = struct.unpack('<f', data_msg.payload[0:4])[0]
-                        if 0 < voltage < 10:  # Reasonable voltage range
-                            interpretation["⚡ Voltage"] = f"{voltage:.2f}V"
-                            
-                    if len(data_msg.payload) >= 8:
-                        # Try to extract temperature
-                        temp = struct.unpack('<f', data_msg.payload[4:8])[0]
-                        if -50 < temp < 100:  # Reasonable temperature range
-                            interpretation["🌡️ Temperature"] = f"{temp:.1f}°C"
-                            
+                    telemetry = telemetry_pb2.Telemetry()
+                    telemetry.ParseFromString(data_msg.payload)
+                    
+                    # Check which telemetry variant is present
+                    variant = telemetry.WhichOneof('variant')
+                    
+                    if variant == 'device_metrics':
+                        device_metrics = telemetry.device_metrics
+                        
+                        # Battery level (percentage)
+                        if hasattr(device_metrics, 'battery_level') and device_metrics.battery_level > 0:
+                            interpretation["🔋 Battery"] = f"{device_metrics.battery_level}%"
+                        
+                        # Voltage
+                        if hasattr(device_metrics, 'voltage') and device_metrics.voltage > 0:
+                            interpretation["⚡ Voltage"] = f"{device_metrics.voltage:.2f}V"
+                        
+                        # Channel utilization
+                        if hasattr(device_metrics, 'channel_utilization') and device_metrics.channel_utilization > 0:
+                            interpretation["📡 Channel Util"] = f"{device_metrics.channel_utilization:.1f}%"
+                        
+                        # Air utilization TX
+                        if hasattr(device_metrics, 'air_util_tx') and device_metrics.air_util_tx > 0:
+                            interpretation["📶 Air Util TX"] = f"{device_metrics.air_util_tx:.1f}%"
+                        
+                        # Uptime
+                        if hasattr(device_metrics, 'uptime_seconds') and device_metrics.uptime_seconds > 0:
+                            uptime_hours = device_metrics.uptime_seconds / 3600
+                            if uptime_hours < 24:
+                                interpretation["⏱️ Uptime"] = f"{uptime_hours:.1f} hours"
+                            else:
+                                uptime_days = uptime_hours / 24
+                                interpretation["⏱️ Uptime"] = f"{uptime_days:.1f} days"
+                    
+                    elif variant == 'environment_metrics':
+                        env_metrics = telemetry.environment_metrics
+                        
+                        # Temperature
+                        if hasattr(env_metrics, 'temperature') and env_metrics.temperature != 0:
+                            interpretation["🌡️ Temperature"] = f"{env_metrics.temperature:.1f}°C"
+                        
+                        # Relative humidity
+                        if hasattr(env_metrics, 'relative_humidity') and env_metrics.relative_humidity > 0:
+                            interpretation["💧 Humidity"] = f"{env_metrics.relative_humidity:.1f}%"
+                        
+                        # Barometric pressure
+                        if hasattr(env_metrics, 'barometric_pressure') and env_metrics.barometric_pressure > 0:
+                            interpretation["🌪️ Pressure"] = f"{env_metrics.barometric_pressure:.1f} hPa"
+                        
+                        # Gas resistance (air quality)
+                        if hasattr(env_metrics, 'gas_resistance') and env_metrics.gas_resistance > 0:
+                            interpretation["🌬️ Gas Resistance"] = f"{env_metrics.gas_resistance:.0f} Ω"
+                        
+                        # Voltage (some environmental sensors report this)
+                        if hasattr(env_metrics, 'voltage') and env_metrics.voltage > 0:
+                            interpretation["⚡ Voltage"] = f"{env_metrics.voltage:.2f}V"
+                    
+                    elif variant == 'air_quality_metrics':
+                        air_metrics = telemetry.air_quality_metrics
+                        
+                        # PM1.0
+                        if hasattr(air_metrics, 'pm10_standard') and air_metrics.pm10_standard > 0:
+                            interpretation["🌫️ PM1.0"] = f"{air_metrics.pm10_standard} μg/m³"
+                        
+                        # PM2.5
+                        if hasattr(air_metrics, 'pm25_standard') and air_metrics.pm25_standard > 0:
+                            interpretation["🌫️ PM2.5"] = f"{air_metrics.pm25_standard} μg/m³"
+                        
+                        # PM10
+                        if hasattr(air_metrics, 'pm100_standard') and air_metrics.pm100_standard > 0:
+                            interpretation["🌫️ PM10"] = f"{air_metrics.pm100_standard} μg/m³"
+                    
+                    elif variant == 'power_metrics':
+                        power_metrics = telemetry.power_metrics
+                        
+                        # Voltage
+                        if hasattr(power_metrics, 'ch1_voltage') and power_metrics.ch1_voltage > 0:
+                            interpretation["⚡ CH1 Voltage"] = f"{power_metrics.ch1_voltage:.2f}V"
+                        
+                        # Current
+                        if hasattr(power_metrics, 'ch1_current') and power_metrics.ch1_current > 0:
+                            interpretation["🔌 CH1 Current"] = f"{power_metrics.ch1_current:.2f}A"
+                        
+                        # Additional channels if present
+                        if hasattr(power_metrics, 'ch2_voltage') and power_metrics.ch2_voltage > 0:
+                            interpretation["⚡ CH2 Voltage"] = f"{power_metrics.ch2_voltage:.2f}V"
+                        
+                        if hasattr(power_metrics, 'ch2_current') and power_metrics.ch2_current > 0:
+                            interpretation["🔌 CH2 Current"] = f"{power_metrics.ch2_current:.2f}A"
+                    
+                    # Add timestamp if available
+                    if hasattr(telemetry, 'time') and telemetry.time > 0:
+                        interpretation["🕐 Telemetry Time"] = self.format_timestamp(telemetry.time)
+                    
+                    # Add size info
                     interpretation["📊 Telemetry Size"] = f"{len(data_msg.payload)} bytes"
                     
                 except Exception as e:
-                    interpretation["Payload Data"] = f"bytes({len(data_msg.payload)}): {data_msg.payload.hex()[:40]}{'...' if len(data_msg.payload) > 20 else ''}"
+                    # Fallback to manual decoding if protobuf parsing fails
+                    try:
+                        if len(data_msg.payload) >= 4:
+                            # Try to extract voltage (common first field)
+                            voltage = struct.unpack('<f', data_msg.payload[0:4])[0]
+                            if 0 < voltage < 10:  # Reasonable voltage range
+                                interpretation["⚡ Voltage"] = f"{voltage:.2f}V"
+                                
+                        if len(data_msg.payload) >= 8:
+                            # Try to extract temperature
+                            temp = struct.unpack('<f', data_msg.payload[4:8])[0]
+                            if -50 < temp < 100:  # Reasonable temperature range
+                                interpretation["🌡️ Temperature"] = f"{temp:.1f}°C"
+                                
+                        interpretation["📊 Telemetry Size"] = f"{len(data_msg.payload)} bytes"
+                        interpretation["⚠️ Parse Status"] = f"Protobuf parsing failed: {e}"
+                        
+                    except Exception as e2:
+                        interpretation["Payload Data"] = f"bytes({len(data_msg.payload)}): {data_msg.payload.hex()[:40]}{'...' if len(data_msg.payload) > 20 else ''}"
+                        interpretation["⚠️ Parse Error"] = f"Both protobuf and manual parsing failed"
                     
             elif data_msg.portnum == portnums_pb2.PortNum.ROUTING_APP:
                 try:
@@ -683,11 +790,11 @@ class MeshtasticUDPDecoder:
         
         return interpretation
     
-    def process_packet(self, data, addr):
+    def process_packet(self, data, addr, original_timestamp=None):
         """Process a received packet and choose output format based on verbose flag"""
         if self.verbose:
             # Use verbose output (existing detailed format)
-            self.print_packet_verbose(data, addr)
+            self.print_packet_verbose(data, addr, original_timestamp)
         else:
             # Use simple output - need to decode packet first
             try:
@@ -721,16 +828,19 @@ class MeshtasticUDPDecoder:
                         }
                 
                 # Use simple output format
-                self.print_packet_simple(data, addr, mesh_packet, decoded_info)
+                self.print_packet_simple(data, addr, mesh_packet, decoded_info, original_timestamp)
                 
             except Exception as e:
                 # If packet parsing fails completely, fall back to verbose mode for this packet
                 print(f"Error parsing packet, showing verbose output: {e}")
-                self.print_packet_verbose(data, addr)
+                self.print_packet_verbose(data, addr, original_timestamp)
     
-    def print_packet_simple(self, data, addr, mesh_packet, decoded_info):
+    def print_packet_simple(self, data, addr, mesh_packet, decoded_info, original_timestamp=None):
         """Print simplified packet information"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        if original_timestamp:
+            timestamp = datetime.fromtimestamp(original_timestamp).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        else:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         
         with self.stats_lock:
             self.packet_count += 1
@@ -752,7 +862,8 @@ class MeshtasticUDPDecoder:
         # Channel and hop info
         channel_info = f"Channel: {mesh_packet.channel}"
         if mesh_packet.hop_limit and mesh_packet.hop_start:
-            hops_info = f"Hops: {mesh_packet.hop_limit}/{mesh_packet.hop_start}"
+            hops_used = mesh_packet.hop_start - mesh_packet.hop_limit
+            hops_info = f"Hops: {hops_used} of {mesh_packet.hop_start}"
         elif mesh_packet.hop_limit:
             hops_info = f"Hops: {mesh_packet.hop_limit} remaining"
         else:
@@ -798,9 +909,12 @@ class MeshtasticUDPDecoder:
         
         print()  # Empty line for separation
     
-    def print_packet_verbose(self, data, addr):
+    def print_packet_verbose(self, data, addr, original_timestamp=None):
         """Print detailed packet information with proper protobuf decoding"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        if original_timestamp:
+            timestamp = datetime.fromtimestamp(original_timestamp).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        else:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         
         with self.stats_lock:
             self.packet_count += 1
@@ -929,11 +1043,155 @@ class MeshtasticUDPDecoder:
         self.print_statistics()
         sys.exit(0)
     
+    def replay_file(self, filename):
+        """Replay packets from a single TSV file"""
+        print(f"Replaying packets from: {filename}")
+        
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                        
+                    try:
+                        # Parse TSV format: timestamp<TAB>hex_data
+                        parts = line.split('\t')
+                        if len(parts) != 2:
+                            print(f"Warning: Invalid line format at line {line_num}: {line[:50]}...")
+                            continue
+                            
+                        timestamp_str, hex_data = parts
+                        original_timestamp = float(timestamp_str)
+                        
+                        # Convert hex back to bytes
+                        packet_data = bytes.fromhex(hex_data)
+                        
+                        # Create fake address for replay
+                        fake_addr = ('127.0.0.1', 4403)
+                        
+                        # Process the packet with original timestamp
+                        self.process_packet(packet_data, fake_addr, original_timestamp)
+                        
+                    except ValueError as e:
+                        print(f"Warning: Invalid hex data at line {line_num}: {e}")
+                        continue
+                    except Exception as e:
+                        print(f"Warning: Error processing line {line_num}: {e}")
+                        continue
+                        
+        except FileNotFoundError:
+            print(f"Error: File not found: {filename}")
+        except Exception as e:
+            print(f"Error reading file {filename}: {e}")
+    
+    def replay_directory(self, directory):
+        """Replay packets from all TSV files in a directory"""
+        print(f"Replaying packets from directory: {directory}")
+        
+        # Find all .tsv files in the directory
+        pattern = os.path.join(directory, "*.tsv")
+        tsv_files = sorted(glob.glob(pattern))
+        
+        if not tsv_files:
+            print(f"No .tsv files found in {directory}")
+            return
+            
+        print(f"Found {len(tsv_files)} capture files")
+        
+        for tsv_file in tsv_files:
+            print(f"\n--- Processing {os.path.basename(tsv_file)} ---")
+            self.replay_file(tsv_file)
+    
+    def replay_stdin(self):
+        """Replay packets from stdin (for piping)"""
+        print("Reading packets from stdin...")
+        
+        try:
+            for line_num, line in enumerate(sys.stdin, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                try:
+                    # Parse TSV format: timestamp<TAB>hex_data
+                    parts = line.split('\t')
+                    if len(parts) != 2:
+                        print(f"Warning: Invalid line format at line {line_num}: {line[:50]}...")
+                        continue
+                        
+                    timestamp_str, hex_data = parts
+                    original_timestamp = float(timestamp_str)
+                    
+                    # Convert hex back to bytes
+                    packet_data = bytes.fromhex(hex_data)
+                    
+                    # Create fake address for replay
+                    fake_addr = ('127.0.0.1', 4403)
+                    
+                    # Process the packet with original timestamp
+                    self.process_packet(packet_data, fake_addr, original_timestamp)
+                    
+                except ValueError as e:
+                    print(f"Warning: Invalid hex data at line {line_num}: {e}")
+                    continue
+                except Exception as e:
+                    print(f"Warning: Error processing line {line_num}: {e}")
+                    continue
+                    
+        except KeyboardInterrupt:
+            print("\nReplay interrupted by user")
+        except Exception as e:
+            print(f"Error reading from stdin: {e}")
+
+    def setup_capture(self):
+        """Set up packet capture to file"""
+        if not self.capture_dir:
+            return
+            
+        # Create capture directory if it doesn't exist
+        os.makedirs(self.capture_dir, exist_ok=True)
+        
+        # Get current date for filename
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        self.current_capture_date = current_date
+        
+        # Open capture file
+        capture_filename = os.path.join(self.capture_dir, f"{current_date}.tsv")
+        self.capture_file = open(capture_filename, 'a', encoding='utf-8')
+        
+        print(f"Capturing packets to: {capture_filename}")
+    
+    def capture_packet(self, data):
+        """Capture packet to file in TSV format"""
+        if not self.capture_file:
+            return
+            
+        # Check if date has changed (for daily rotation)
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        if current_date != self.current_capture_date:
+            # Close current file and open new one
+            self.capture_file.close()
+            self.current_capture_date = current_date
+            capture_filename = os.path.join(self.capture_dir, f"{current_date}.tsv")
+            self.capture_file = open(capture_filename, 'a', encoding='utf-8')
+            print(f"Rotated capture to: {capture_filename}")
+        
+        # Write timestamp and hex data
+        timestamp = time.time()
+        hex_data = data.hex()
+        self.capture_file.write(f"{timestamp}\t{hex_data}\n")
+        self.capture_file.flush()  # Ensure data is written immediately
+
     def start_monitoring(self):
         """Start monitoring UDP packets"""
         # Set up signal handler for graceful shutdown
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
+        
+        # Set up capture if requested
+        if self.capture_dir:
+            self.setup_capture()
         
         if not self.setup_socket():
             return
@@ -949,6 +1207,11 @@ class MeshtasticUDPDecoder:
                     data, addr = self.sock.recvfrom(4096)
                     
                     if data:
+                        # Capture packet if requested
+                        if self.capture_file:
+                            self.capture_packet(data)
+                        
+                        # Process packet for display
                         self.process_packet(data, addr)
                         
                 except socket.timeout:
@@ -964,4 +1227,7 @@ class MeshtasticUDPDecoder:
         finally:
             if self.sock:
                 self.sock.close()
+            if self.capture_file:
+                self.capture_file.close()
+                print(f"Capture file closed")
             self.print_statistics()
