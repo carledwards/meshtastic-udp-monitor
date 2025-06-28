@@ -429,6 +429,16 @@ class MeshtasticUDPDecoder:
         
         return None, f"All decryption attempts failed for channel hash {channel_hash} (tried {len(self.channel_keys) + len(additional_keys)} keys){pki_hint}", None
     
+    def format_snr_value(self, snr_raw):
+        """Format SNR value, replacing invalid values with N/A"""
+        snr_val = snr_raw / 4.0  # SNR is scaled by 4 in protobuf
+        
+        # Check for invalid/sentinel SNR values
+        if snr_val <= -30.0 or snr_val >= 50.0:  # Reasonable SNR range is roughly -30 to +50 dB
+            return "N/A"
+        else:
+            return f"{snr_val:.1f}dB"
+    
     def format_hardware_model(self, hw_model):
         """Format hardware model number with human-readable name"""
         # Hardware model mapping from actual meshtastic firmware source
@@ -599,18 +609,78 @@ class MeshtasticUDPDecoder:
                     route = mesh_pb2.RouteDiscovery()
                     route.ParseFromString(data_msg.payload)
                     
+                    # Handle forward route path
                     if route.route:
-                        route_nodes = [self.format_node_id(node) for node in route.route]
-                        interpretation["🛣️ Route Path"] = " → ".join(route_nodes)
-                        interpretation["🔢 Hop Count"] = f"{len(route.route)} nodes"
+                        # Format route nodes with names if available
+                        if self.node_db_file:
+                            route_nodes = [self.format_node_with_name(self.format_node_id(node)) for node in route.route]
+                        else:
+                            route_nodes = [self.format_node_id(node) for node in route.route]
                         
-                    if route.snr_towards:
-                        snr_values = [f"{snr/4:.1f}dB" for snr in route.snr_towards]
-                        interpretation["📶 SNR Forward"] = " → ".join(snr_values)
+                        # Embed SNR values with route nodes if available
+                        if route.snr_towards and len(route.snr_towards) >= len(route.route):
+                            # Pair each node with its SNR value
+                            route_with_snr = []
+                            for i, node in enumerate(route_nodes):
+                                if i < len(route.snr_towards):
+                                    snr_formatted = self.format_snr_value(route.snr_towards[i])
+                                    route_with_snr.append(f"{node} ({snr_formatted})")
+                                else:
+                                    route_with_snr.append(node)
+                            interpretation["📤 Trace Out"] = " → ".join(route_with_snr)
+                            
+                            # Show extra SNR values if any
+                            if len(route.snr_towards) > len(route.route):
+                                extra_snr = [self.format_snr_value(snr) for snr in route.snr_towards[len(route.route):]]
+                                interpretation["📶 Extra Forward SNR"] = " → ".join(extra_snr)
+                        else:
+                            interpretation["📤 Trace Out"] = " → ".join(route_nodes)
+                            if route.snr_towards:
+                                snr_values = [self.format_snr_value(snr) for snr in route.snr_towards]
+                                interpretation["📶 Forward SNR"] = " → ".join(snr_values)
                         
-                    if route.snr_back:
-                        snr_back_values = [f"{snr/4:.1f}dB" for snr in route.snr_back]
-                        interpretation["📶 SNR Return"] = " → ".join(snr_back_values)
+                        interpretation["📊 Forward Hops"] = f"{len(route.route)} nodes"
+                    
+                    # Handle return route path
+                    if route.route_back:
+                        # Format return route nodes with names if available
+                        if self.node_db_file:
+                            return_nodes = [self.format_node_with_name(self.format_node_id(node)) for node in route.route_back]
+                        else:
+                            return_nodes = [self.format_node_id(node) for node in route.route_back]
+                        
+                        # Embed SNR values with return route nodes if available
+                        if route.snr_back and len(route.snr_back) >= len(route.route_back):
+                            # Pair each return node with its SNR value
+                            return_with_snr = []
+                            for i, node in enumerate(return_nodes):
+                                if i < len(route.snr_back):
+                                    snr_formatted = self.format_snr_value(route.snr_back[i])
+                                    return_with_snr.append(f"{node} ({snr_formatted})")
+                                else:
+                                    return_with_snr.append(node)
+                            interpretation["📥 Trace Back"] = " → ".join(return_with_snr)
+                        else:
+                            interpretation["📥 Trace Back"] = " → ".join(return_nodes)
+                            if route.snr_back:
+                                snr_back_values = [self.format_snr_value(snr) for snr in route.snr_back]
+                                interpretation["📶 Return SNR"] = " → ".join(snr_back_values)
+                        
+                        interpretation["📊 Return Hops"] = f"{len(route.route_back)} nodes"
+                    
+                    # If we only have forward route but return SNR, show return SNR separately
+                    elif route.snr_back and not route.route_back:
+                        snr_back_values = [self.format_snr_value(snr) for snr in route.snr_back]
+                        interpretation["📶 Return SNR"] = " → ".join(snr_back_values)
+                    
+                    # Show debug info if arrays don't align
+                    if route.route and route.snr_towards and len(route.snr_towards) != len(route.route):
+                        interpretation["⚠️ Debug"] = f"Forward: {len(route.route)} nodes, {len(route.snr_towards)} SNR values"
+                    if route.route_back and route.snr_back and len(route.snr_back) != len(route.route_back):
+                        if "⚠️ Debug" in interpretation:
+                            interpretation["⚠️ Debug"] += f" | Return: {len(route.route_back)} nodes, {len(route.snr_back)} SNR values"
+                        else:
+                            interpretation["⚠️ Debug"] = f"Return: {len(route.route_back)} nodes, {len(route.snr_back)} SNR values"
                         
                 except Exception as e:
                     interpretation["Payload Data"] = f"bytes({len(data_msg.payload)}): {data_msg.payload.hex()[:40]}{'...' if len(data_msg.payload) > 20 else ''}"
